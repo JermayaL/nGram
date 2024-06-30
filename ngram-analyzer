@@ -1,0 +1,137 @@
+// v2 nGram analysing script (c) JermayADS.nl (https://www.linkedin.com/in/jermayaleijen/)
+// MCC script.
+// Make a copy: https://docs.google.com/spreadsheets/d/1WpInaiiUZBFmQbHwLHUgPt-k7P7gsqNydrfdJsOJZQ0/copy
+
+const client_IDs = ['XXXX', 'XXXX'] // add multiple client_ids.
+
+function main(){
+  var ss = SpreadsheetApp.openById('1WpInaiiUZBFmQbHwLHUgPt-k7P7gsqNydrfdJsOJZQ0') //In row 3 it is: 1WpInaiiUZBFmQbHwLHUgPt-k7P7gsqNydrfdJsOJZQ0. Adjust it with yours.
+  var sheets = ss.getSheets();
+  sheets.forEach(function(sheet){
+    if(sheet.getLastRow() > 1){
+      sheet.getRange(2, 1, sheet.getLastRow()-1, sheet.getLastColumn()).clearContent();
+    }
+  })
+  
+  var managerAccount = AdsApp.currentAccount();
+  var accountIterator = AdsManagerApp.accounts()
+                        .withIds(client_IDs)
+                         .get();
+  
+  for (const account of accountIterator) {
+    var query = 'SELECT search_term_view.search_term, metrics.impressions, metrics.clicks, metrics.ctr, metrics.average_cost, metrics.average_cpc, metrics.conversions, metrics.cost_per_conversion, metrics.conversions_value, campaign.target_roas.target_roas, metrics.cost_micros  FROM search_term_view '
+    + 'WHERE segments.date DURING LAST_30_DAYS AND metrics.clicks > 0'
+    
+    var data = get_report(account, query);
+    Logger.log(data)
+    if(data.length > 0) {
+      var sheet = ss.getSheetByName('Last 30 Days')
+      sheet.getRange(sheet.getLastRow()+1, 1, data.length, data[0].length).setValues(data);
+      sheet.getRange(2, 1, sheet.getLastRow()-1, sheet.getLastColumn()).sort({column: 12, ascending: false})
+    }
+    
+    const MILLIS_PER_DAY = 1000 * 60 * 60 * 24;
+    const now = new Date();
+    var from = new Date(now.getTime() - 90 * MILLIS_PER_DAY);
+    var to = new Date(now.getTime() - 1 * MILLIS_PER_DAY);
+    const timeZone = AdsApp.currentAccount().getTimeZone();
+    
+    var query = 'SELECT search_term_view.search_term, metrics.impressions, metrics.clicks, metrics.ctr, metrics.average_cost, metrics.average_cpc, metrics.conversions, metrics.cost_per_conversion, metrics.conversions_value, campaign.target_roas.target_roas, metrics.cost_micros  FROM search_term_view WHERE metrics.clicks > 0 AND segments.date '
+    +'BETWEEN ' + Utilities.formatDate(from, timeZone, 'yyyyMMdd') + ' AND ' + Utilities.formatDate(to, timeZone, 'yyyyMMdd');
+    
+    var data = get_report(account, query);
+    if(data.length > 0) {
+      var sheet = ss.getSheetByName('Last 90 Days')
+      sheet.getRange(sheet.getLastRow()+1, 1, data.length, data[0].length).setValues(data);
+      sheet.getRange(2, 1, sheet.getLastRow()-1, sheet.getLastColumn()).sort({column: 12, ascending: false})
+    }    
+    
+    from = new Date(now.getTime() - 180 * MILLIS_PER_DAY);
+    to = new Date(now.getTime() - 1 * MILLIS_PER_DAY);
+    
+    var query = 'SELECT search_term_view.search_term, metrics.impressions, metrics.clicks, metrics.ctr, metrics.average_cost, metrics.average_cpc, metrics.conversions, metrics.cost_per_conversion, metrics.conversions_value, campaign.target_roas.target_roas, metrics.cost_micros FROM search_term_view WHERE  metrics.clicks > 0 AND  segments.date '
+    +'BETWEEN ' + Utilities.formatDate(from, timeZone, 'yyyyMMdd') + ' AND ' + Utilities.formatDate(to, timeZone, 'yyyyMMdd');
+    
+    var data = get_report(account, query);
+    if(data.length > 0) {
+      var sheet = ss.getSheetByName('Last 180 Days')
+      sheet.getRange(sheet.getLastRow()+1, 1, data.length, data[0].length).setValues(data);
+      sheet.getRange(2, 1, sheet.getLastRow()-1, sheet.getLastColumn()).sort({column: 12, ascending: false})
+    }    
+  }
+  AdsManagerApp.select(managerAccount);
+}
+
+function get_report(account, query) {
+  AdsManagerApp.select(account);
+  console.log(query)
+  
+  const report = AdsApp.report(query);
+  
+  var data = []
+  
+  var rows = report.rows();
+  while (rows.hasNext()) {
+    var row = rows.next();
+    if(row['metrics.clicks'] < 1){
+      continue
+    }
+    var ctr = 0;
+    var cpc = 0;
+    var cost_pc = 0;
+    let conv = 0;
+    var roas = 0;
+
+    
+    if(row['metrics.ctr']){
+      ctr = round(row['metrics.ctr']*100)
+    }
+    
+    if(row['metrics.average_cpc']){
+      cpc = round(row['metrics.average_cpc']/1000000)
+    }
+    
+      
+
+      
+    if(row['metrics.conversions']){
+      conv = row['metrics.conversions']
+    }
+    var cost = round(row['metrics.cost_micros']/1000000)
+    
+    if(conv!=0){
+      cost_pc = round(cost/conv)
+    }
+    
+    if(cost != 0){
+      roas = row['metrics.conversions_value']*100/cost 
+    }
+    
+
+    var new_row = []
+    new_row.push(account.getCustomerId())
+    new_row.push(row['search_term_view.search_term'])
+    new_row.push(count_words(row['search_term_view.search_term']))
+    new_row.push(row['metrics.impressions'])
+    new_row.push(row['metrics.clicks'])
+    new_row.push(cost)
+    new_row.push(ctr)
+    new_row.push(cpc)
+    new_row.push(conv)
+    new_row.push(cost_pc)
+    new_row.push(row['metrics.conversions_value'])
+    new_row.push(roas.toFixed(2))
+    data.push(new_row);
+  }
+  
+  return data
+}
+
+function count_words(str){
+  return str.split(' ').length;
+}
+
+
+function round(num){
+  return parseFloat((num*100).toFixed(2))/100
+}
